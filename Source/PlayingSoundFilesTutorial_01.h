@@ -58,6 +58,10 @@ public:
         stopButton.setEnabled (false);
         
         addAndMakeVisible(&mySlider);
+        mySlider.setSliderStyle(juce::Slider::SliderStyle::Rotary);
+        mySlider.setTextBoxStyle (Slider::TextBoxBelow, true, 0, 0);
+        mySlider.setAlwaysOnTop(true);
+        
         mySlider.setValue(10);
         mySlider.setRange(1, 20000, 0.1f);
         mySlider.onValueChange = [this] {sliderValueChanged(); };
@@ -140,10 +144,14 @@ public:
 
     void resized() override
     {
-        openButton.setBounds (10, 10, getWidth() - 20, 20);
-        playButton.setBounds (10, 40, getWidth() - 20, 20);
-        stopButton.setBounds (10, 70, getWidth() - 20, 20);
-        mySlider.setBounds (10, 100, getWidth() - 80, 20);
+        auto oneSixthhWidth = getWidth()/6;
+        const auto buttonWidth = 50;
+        
+        openButton.setBounds (oneSixthhWidth, 10, buttonWidth, 20);
+        playButton.setBounds (oneSixthhWidth*2.5, 10, buttonWidth, 20);
+        stopButton.setBounds (oneSixthhWidth*4, 10, buttonWidth, 20);
+        mySlider.setBounds (10, 100, 50, 50);
+        
     }
 
     void changeListenerCallback (juce::ChangeBroadcaster* source) override
