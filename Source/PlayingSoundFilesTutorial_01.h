@@ -32,7 +32,9 @@
 //==============================================================================
 class MainContentComponent   : public juce::AudioAppComponent,
                                public juce::ChangeListener,
-                               public juce::Timer
+                               public juce::Timer,
+                               public juce::FileDragAndDropTarget,
+                               public juce::DragAndDropContainer
 {
 public:
     MainContentComponent()
@@ -41,10 +43,6 @@ public:
         spectrogramImage(juce::Image::RGB, 512, 512, true),
         lp1(dsp::IIR::Coefficients<float>::makeLowPass(44100, 200.f, 0.1f))
     {
-        addAndMakeVisible (&openButton);
-        openButton.setButtonText ("Open...");
-        openButton.onClick = [this] { openButtonClicked(); };
-
         addAndMakeVisible (&playButton);
         playButton.setButtonText ("Play");
         playButton.onClick = [this] { playButtonClicked(); };
@@ -57,6 +55,12 @@ public:
         stopButton.setColour (juce::TextButton::buttonColourId, juce::Colours::red);
         stopButton.setEnabled (false);
         
+        addAndMakeVisible (&pauseButton);
+       pauseButton.setButtonText ("Pause");
+       //pauseButton.onClick = [this] { playButtonClicked(); };
+       pauseButton.setColour (juce::TextButton::buttonColourId, juce::Colours::green);
+       pauseButton.setEnabled (false);
+        
         addAndMakeVisible(&mySlider);
         mySlider.setSliderStyle(juce::Slider::SliderStyle::Rotary);
         mySlider.setTextBoxStyle (Slider::TextBoxBelow, true, 0, 0);
@@ -64,12 +68,34 @@ public:
         
         mySlider.setValue(10);
         mySlider.setRange(1, 20000, 0.1f);
+        mySlider.setColour (Slider::thumbColourId, juce::Colours::grey);
         mySlider.onValueChange = [this] {sliderValueChanged(); };
+        
+        addAndMakeVisible(&qSlider);
+        qSlider.setSliderStyle(juce::Slider::SliderStyle::Rotary);
+        qSlider.setTextBoxStyle (Slider::TextBoxBelow, true, 0, 0);
+        qSlider.setAlwaysOnTop(true);
+        
+        qSlider.setValue(0.1f);
+        qSlider.setRange(0.1f, 5, 0.1f);
+        qSlider.setColour (Slider::thumbColourId, juce::Colours::grey);
+        qSlider.onValueChange = [this] {qSliderValueChanged(); };
 
-        setSize (300, 200);
+        setSize (300, 400);
 
         formatManager.registerBasicFormats();       // [1]
         transportSource.addChangeListener (this);   // [2]
+        
+        addAndMakeVisible(frequencyLabel);
+        frequencyLabel.setText ("Hz", juce::dontSendNotification);
+        frequencyLabel.setJustificationType(Justification::centred);
+        frequencyLabel.attachToComponent (&mySlider, false);
+        
+        addAndMakeVisible(qLabel);
+        qLabel.setText ("Q", juce::dontSendNotification);
+        qLabel.setJustificationType(Justification::centred);
+        qLabel.attachToComponent (&qSlider, false);
+
 
         startTimerHz(60);
 
@@ -81,6 +107,137 @@ public:
         shutdownAudio();
     }
 
+    //========================================================= GUI
+    
+    bool isInterestedInFileDrag(const juce::StringArray &files) override {
+        for (const auto &f : files) {
+            if (f.endsWithIgnoreCase(".wav"))
+                return true;
+        }
+        return false;
+    };
+    void filesDropped(const juce::StringArray &files, int x, int y) override
+    {
+       if(!files.isEmpty())
+       {
+           for (const auto &s : files)
+           {
+               if (s.endsWithIgnoreCase(".wav"))
+               {
+                   auto myFile = juce::File(s);
+                   
+                   if (myFile.existsAsFile())
+                   {
+                       // Reader
+                       auto reader = formatManager.createReaderFor(myFile);
+           
+                      if (reader != nullptr)
+                       {
+                           auto newSource = std::make_unique<juce::AudioFormatReaderSource> (reader, true);
+                           transportSource.setSource (newSource.get(), 0, nullptr, reader->sampleRate);
+                           playButton.setEnabled (true);
+                           readerSource.reset (newSource.release());
+                           trackIsOn = true;
+                       }
+                   }
+                   else
+                   {
+                       readerSource.reset(nullptr);
+                       transportSource.setSource(nullptr);
+                   }
+               }
+           }
+       }
+    };
+    
+    void resized() override
+      {
+          auto oneSixthhWidth = getWidth()/6;
+          const auto buttonWidth = 50;
+          
+          playButton.setBounds (oneSixthhWidth, 10, buttonWidth, 20);
+          stopButton.setBounds (oneSixthhWidth*4, 10, buttonWidth, 20);
+          mySlider.setBounds (60, 100, 50, 50);
+          qSlider.setBounds(getWidth()-110, 100, 50, 50);
+          
+      }
+    
+    void playButtonClicked()
+    {
+        changeState (Starting);
+    }
+
+    void stopButtonClicked()
+    {
+        changeState (Stopping);
+    }
+
+    
+    
+    void sliderValueChanged()
+    {
+        lolsky = mySlider.getValue();
+    }
+    
+    void qSliderValueChanged()
+    {
+        qsky = qSlider.getValue();
+    }
+    
+    void drawNextLineOfSpectrogram()
+    {
+        auto rightHandEdge = spectrogramImage.getWidth() - 1;
+        auto imageHeight = spectrogramImage.getHeight();
+
+        // first, shuffle our image leftwards by 1 pixel..
+        spectrogramImage.moveImageSection(0, 0, 1, 0, rightHandEdge, imageHeight);         // [1]
+
+        // then render our FFT data..
+        forwardFFT.performFrequencyOnlyForwardTransform(fftData.data());                   // [2]
+
+        // find the range of values produced, so we can scale our rendering to
+        // show up the detail clearly
+        auto maxLevel = juce::FloatVectorOperations::findMinAndMax(fftData.data(), fftSize / 2); // [3]
+
+        for (auto y = 1; y < imageHeight; ++y)                                              // [4]
+        {
+            auto skewedProportionY = 1.0f - std::exp(std::log((float)y / (float)imageHeight) * 0.2f);
+            auto fftDataIndex = (size_t)juce::jlimit(0, fftSize / 2, (int)(skewedProportionY * fftSize / 2));
+            auto level = juce::jmap(fftData[fftDataIndex], 0.0f, juce::jmax(maxLevel.getEnd(), 1e-5f), 0.0f, 1.0f);
+
+            spectrogramImage.setPixelAt(rightHandEdge, y, juce::Colour::fromHSV(level, 1.0f, level, 1.0f)); // [5]
+        }
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        g.fillAll(juce::Colours::black);
+
+        if(trackIsOn == false) {
+            auto text_rect_w = std::min(getWidth() - 16, 200);
+            auto text_rect_h = std::min(getHeight() - 16, 100);
+            Rectangle<int> text_rect((getWidth() - text_rect_w) / 2, (getHeight() - text_rect_h) / 2, text_rect_w, text_rect_h);
+            g.setFont(juce::Font("SF Pro Text", 17, juce::Font::FontStyleFlags::plain));
+            g.setColour(juce::Colour(0xff818A97));
+            g.drawText("Drag and drop files here to open them as tracks.", text_rect, juce::Justification::centred);
+            
+            g.setColour(juce::Colour(0x70818A97));
+            juce::Path path;
+            auto stroke_thickness = 1.0;
+            path.addRoundedRectangle(text_rect.getX() - stroke_thickness / 2, text_rect.getY() - stroke_thickness / 2, text_rect.getWidth()  + stroke_thickness, text_rect.getHeight() + stroke_thickness, 8);
+            juce::PathStrokeType stroke_type(stroke_thickness, juce::PathStrokeType::JointStyle::curved, juce::PathStrokeType::EndCapStyle::rounded);
+            float dash_length[2];
+            dash_length[0] = 4;
+            dash_length[1] = 8;
+            stroke_type.createDashedStroke(path, path, dash_length, 2);
+            g.strokePath(path, stroke_type);
+        }
+        g.setOpacity(1.0f);
+        g.drawImage(spectrogramImage, getLocalBounds().toFloat());
+    }
+    
+    //============================================================== AUDIO
+    
     void prepareToPlay (int samplesPerBlockExpected, double sampleRate) override
     {
         auto* device = deviceManager.getCurrentAudioDevice();
@@ -134,7 +291,7 @@ public:
     
     void updateFilter()
     {
-        *lp1.state = *dsp::IIR::Coefficients<float>::makeLowPass(44100, lolsky, 0.1);
+        *lp1.state = *dsp::IIR::Coefficients<float>::makeLowPass(44100, lolsky, qsky);
     }
 
     void releaseResources() override
@@ -142,17 +299,7 @@ public:
         transportSource.releaseResources();
     }
 
-    void resized() override
-    {
-        auto oneSixthhWidth = getWidth()/6;
-        const auto buttonWidth = 50;
-        
-        openButton.setBounds (oneSixthhWidth, 10, buttonWidth, 20);
-        playButton.setBounds (oneSixthhWidth*2.5, 10, buttonWidth, 20);
-        stopButton.setBounds (oneSixthhWidth*4, 10, buttonWidth, 20);
-        mySlider.setBounds (10, 100, 50, 50);
-        
-    }
+  
 
     void changeListenerCallback (juce::ChangeBroadcaster* source) override
     {
@@ -171,7 +318,8 @@ private:
         Stopped,
         Starting,
         Playing,
-        Stopping
+        Stopping,
+        Pausing
     };
 
     void changeState (TransportState newState)
@@ -204,49 +352,7 @@ private:
         }
     }
 
-    void openButtonClicked()
-    {
-        chooser = std::make_unique<juce::FileChooser> ("Select a Wave file to play...",
-                                                       juce::File{},
-                                                       "*.wav");                     // [7]
-        auto chooserFlags = juce::FileBrowserComponent::openMode
-                          | juce::FileBrowserComponent::canSelectFiles;
-
-        chooser->launchAsync (chooserFlags, [this] (const FileChooser& fc)           // [8]
-        {
-            auto file = fc.getResult();
-
-            if (file != File{})                                                      // [9]
-            {
-                auto* reader = formatManager.createReaderFor (file);                 // [10]
-
-                if (reader != nullptr)
-                {
-                    auto newSource = std::make_unique<juce::AudioFormatReaderSource> (reader, true);   // [11]
-                    transportSource.setSource (newSource.get(), 0, nullptr, reader->sampleRate);       // [12]
-                    playButton.setEnabled (true);                                                      // [13]
-                    readerSource.reset (newSource.release());                                          // [14]
-                }
-            }
-        });
-    }
-
-    void playButtonClicked()
-    {
-        changeState (Starting);
-    }
-
-    void stopButtonClicked()
-    {
-        changeState (Stopping);
-    }
-
-    
-    
-    void sliderValueChanged()
-    {
-        lolsky = mySlider.getValue();
-    }
+   
     
     void pushNextSampleIntoFifo(float sample) noexcept
     {
@@ -267,38 +373,7 @@ private:
         fifo[(size_t)fifoIndex++] = sample; // [9]
     }
 
-    void drawNextLineOfSpectrogram()
-    {
-        auto rightHandEdge = spectrogramImage.getWidth() - 1;
-        auto imageHeight = spectrogramImage.getHeight();
-
-        // first, shuffle our image leftwards by 1 pixel..
-        spectrogramImage.moveImageSection(0, 0, 1, 0, rightHandEdge, imageHeight);         // [1]
-
-        // then render our FFT data..
-        forwardFFT.performFrequencyOnlyForwardTransform(fftData.data());                   // [2]
-
-        // find the range of values produced, so we can scale our rendering to
-        // show up the detail clearly
-        auto maxLevel = juce::FloatVectorOperations::findMinAndMax(fftData.data(), fftSize / 2); // [3]
-
-        for (auto y = 1; y < imageHeight; ++y)                                              // [4]
-        {
-            auto skewedProportionY = 1.0f - std::exp(std::log((float)y / (float)imageHeight) * 0.2f);
-            auto fftDataIndex = (size_t)juce::jlimit(0, fftSize / 2, (int)(skewedProportionY * fftSize / 2));
-            auto level = juce::jmap(fftData[fftDataIndex], 0.0f, juce::jmax(maxLevel.getEnd(), 1e-5f), 0.0f, 1.0f);
-
-            spectrogramImage.setPixelAt(rightHandEdge, y, juce::Colour::fromHSV(level, 1.0f, level, 1.0f)); // [5]
-        }
-    }
-
-    void paint(juce::Graphics& g) override
-    {
-        g.fillAll(juce::Colours::black);
-
-        g.setOpacity(1.0f);
-        g.drawImage(spectrogramImage, getLocalBounds().toFloat());
-    }
+    
 
     void timerCallback() override
     {
@@ -314,10 +389,11 @@ private:
     static constexpr auto fftSize = 1 << fftOrder;
     
     //==========================================================================
-    juce::TextButton openButton;
+    juce::TextButton pauseButton;
     juce::TextButton playButton;
     juce::TextButton stopButton;
-    juce::Slider mySlider;
+    juce::Slider mySlider, qSlider;
+    juce::Label  frequencyLabel, qLabel;
 
     std::unique_ptr<juce::FileChooser> chooser;
 
@@ -335,5 +411,7 @@ private:
     int fifoIndex = 0;                                  // [6]
     bool nextFFTBlockReady = false;                     // [7]
     float lolsky = 20000;
+    float qsky = 0.1f;
+    bool trackIsOn = false;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainContentComponent)
 };
