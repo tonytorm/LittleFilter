@@ -56,17 +56,17 @@ public:
         stopButton.setEnabled (false);
         
         addAndMakeVisible (&pauseButton);
-       pauseButton.setButtonText ("Pause");
-       //pauseButton.onClick = [this] { playButtonClicked(); };
-       pauseButton.setColour (juce::TextButton::buttonColourId, juce::Colours::green);
-       pauseButton.setEnabled (false);
+        pauseButton.setButtonText ("Pause");
+        pauseButton.onClick = [this] { pauseButtonClicked(); };
+        pauseButton.setColour (juce::TextButton::buttonColourId, juce::Colours::darkgrey);
+        pauseButton.setEnabled (false);
         
         addAndMakeVisible(&mySlider);
         mySlider.setSliderStyle(juce::Slider::SliderStyle::Rotary);
         mySlider.setTextBoxStyle (Slider::TextBoxBelow, true, 0, 0);
         mySlider.setAlwaysOnTop(true);
         
-        mySlider.setValue(10);
+        mySlider.setValue(20000);
         mySlider.setRange(1, 20000, 0.1f);
         mySlider.setColour (Slider::thumbColourId, juce::Colours::grey);
         mySlider.onValueChange = [this] {sliderValueChanged(); };
@@ -83,8 +83,8 @@ public:
 
         setSize (300, 400);
 
-        formatManager.registerBasicFormats();       // [1]
-        transportSource.addChangeListener (this);   // [2]
+        formatManager.registerBasicFormats();
+        transportSource.addChangeListener (this);
         
         addAndMakeVisible(frequencyLabel);
         frequencyLabel.setText ("Hz", juce::dontSendNotification);
@@ -107,8 +107,7 @@ public:
         shutdownAudio();
     }
 
-    //========================================================= GUI
-    
+    //========================================================================== GUI
     bool isInterestedInFileDrag(const juce::StringArray &files) override {
         for (const auto &f : files) {
             if (f.endsWithIgnoreCase(".wav"))
@@ -151,37 +150,16 @@ public:
     };
     
     void resized() override
-      {
-          auto oneSixthhWidth = getWidth()/6;
-          const auto buttonWidth = 50;
+    {
+        auto oneSixthhWidth = getWidth()/6;
+        const auto buttonWidth = 50;
+        
+        playButton.setBounds (oneSixthhWidth, 10, buttonWidth, 20);
+        pauseButton.setBounds (oneSixthhWidth*2.5, 10, buttonWidth, 20);
+        stopButton.setBounds (oneSixthhWidth*4, 10, buttonWidth, 20);
+        mySlider.setBounds (60, 100, 50, 50);
+        qSlider.setBounds(getWidth()-110, 100, 50, 50);
           
-          playButton.setBounds (oneSixthhWidth, 10, buttonWidth, 20);
-          stopButton.setBounds (oneSixthhWidth*4, 10, buttonWidth, 20);
-          mySlider.setBounds (60, 100, 50, 50);
-          qSlider.setBounds(getWidth()-110, 100, 50, 50);
-          
-      }
-    
-    void playButtonClicked()
-    {
-        changeState (Starting);
-    }
-
-    void stopButtonClicked()
-    {
-        changeState (Stopping);
-    }
-
-    
-    
-    void sliderValueChanged()
-    {
-        lolsky = mySlider.getValue();
-    }
-    
-    void qSliderValueChanged()
-    {
-        qsky = qSlider.getValue();
     }
     
     void drawNextLineOfSpectrogram()
@@ -236,8 +214,7 @@ public:
         g.drawImage(spectrogramImage, getLocalBounds().toFloat());
     }
     
-    //============================================================== AUDIO
-    
+    //========================================================================== AUDIO
     void prepareToPlay (int samplesPerBlockExpected, double sampleRate) override
     {
         auto* device = deviceManager.getCurrentAudioDevice();
@@ -259,7 +236,6 @@ public:
         {
             bufferToFill.clearActiveBufferRegion();
             return;
-            
         }
 
         transportSource.getNextAudioBlock (bufferToFill);
@@ -299,8 +275,6 @@ public:
         transportSource.releaseResources();
     }
 
-  
-
     void changeListenerCallback (juce::ChangeBroadcaster* source) override
     {
         if (source == &transportSource)
@@ -310,6 +284,31 @@ public:
             else
                 changeState (Stopped);
         }
+    }
+    
+    void playButtonClicked()
+    {
+        changeState (Starting);
+    }
+
+    void stopButtonClicked()
+    {
+        changeState (Stopping);
+    }
+    
+    void pauseButtonClicked()
+    {
+        changeState (Pausing);
+    }
+    
+    void sliderValueChanged()
+    {
+        lolsky = mySlider.getValue();
+    }
+    
+    void qSliderValueChanged()
+    {
+        qsky = qSlider.getValue();
     }
 
 private:
@@ -330,37 +329,46 @@ private:
 
             switch (state)
             {
-                case Stopped:                           // [3]
+                case Stopped:
                     stopButton.setEnabled (false);
+                    pauseButton.setEnabled(false);
                     playButton.setEnabled (true);
-                    transportSource.setPosition (0.0);
+                    transportSource.setPosition (fratm);
                     break;
 
-                case Starting:                          // [4]
+                case Starting:
                     playButton.setEnabled (false);
                     transportSource.start();
                     break;
 
-                case Playing:                           // [5]
+                case Playing:
+                    pauseButton.setEnabled (true);
                     stopButton.setEnabled (true);
                     break;
 
-                case Stopping:                          // [6]
+                case Stopping:
+                    transportSource.stop();
+                    fratm = 0.0;
+                    break;
+                    
+                case Pausing:
+                    fratm = transportSource.getCurrentPosition();
+                    pauseButton.setEnabled (false);
+                    transportSource.setPosition(fratm);
+                    std::cout << fratm;
                     transportSource.stop();
                     break;
             }
         }
     }
 
-   
-    
     void pushNextSampleIntoFifo(float sample) noexcept
     {
         // if the fifo contains enough data, set a flag to say
         // that the next line should now be rendered..
-        if (fifoIndex == fftSize)       // [8]
+        if (fifoIndex == fftSize)
         {
-            if (!nextFFTBlockReady)    // [9]
+            if (!nextFFTBlockReady)
             {
                 std::fill(fftData.begin(), fftData.end(), 0.0f);
                 std::copy(fifo.begin(), fifo.end(), fftData.begin());
@@ -370,10 +378,8 @@ private:
             fifoIndex = 0;
         }
 
-        fifo[(size_t)fifoIndex++] = sample; // [9]
+        fifo[(size_t)fifoIndex++] = sample;
     }
-
-    
 
     void timerCallback() override
     {
@@ -385,7 +391,7 @@ private:
         }
     }
     
-    static constexpr auto fftOrder = 10;                // [1]
+    static constexpr auto fftOrder = 10;
     static constexpr auto fftSize = 1 << fftOrder;
     
     //==========================================================================
@@ -412,6 +418,7 @@ private:
     bool nextFFTBlockReady = false;                     // [7]
     float lolsky = 20000;
     float qsky = 0.1f;
+    float fratm = 0.0;
     bool trackIsOn = false;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainContentComponent)
 };
