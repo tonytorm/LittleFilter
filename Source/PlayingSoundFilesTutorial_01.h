@@ -26,7 +26,7 @@
 
 *******************************************************************************/
 
-
+#include <algorithm>
 #pragma once
 
 //==============================================================================
@@ -61,13 +61,25 @@ public:
         pauseButton.setColour (juce::TextButton::buttonColourId, juce::Colours::darkgrey);
         pauseButton.setEnabled (false);
         
+        addAndMakeVisible (&prevButton);
+        prevButton.setButtonText ("Prev");
+        prevButton.onClick = [this] { prevButtonClicked(); };
+        prevButton.setColour (juce::TextButton::buttonColourId, juce::Colours::darkgrey);
+        prevButton.setEnabled (false);
+        
+        addAndMakeVisible (&nextButton);
+        nextButton.setButtonText ("Next");
+        nextButton.onClick = [this] { nextButtonClicked(); };
+        nextButton.setColour (juce::TextButton::buttonColourId, juce::Colours::darkgrey);
+        nextButton.setEnabled (false);
+        
         addAndMakeVisible(&mySlider);
         mySlider.setSliderStyle(juce::Slider::SliderStyle::Rotary);
         mySlider.setTextBoxStyle (Slider::TextBoxBelow, true, 0, 0);
         mySlider.setAlwaysOnTop(true);
         
-        mySlider.setValue(20000);
-        mySlider.setRange(1, 20000, 0.1f);
+        mySlider.setRange(20, 20000, 0.1f);
+        mySlider.setValue(20000.f);
         mySlider.setColour (Slider::thumbColourId, juce::Colours::grey);
         mySlider.onValueChange = [this] {sliderValueChanged(); };
         
@@ -105,6 +117,7 @@ public:
     ~MainContentComponent() override
     {
         shutdownAudio();
+        
     }
 
     //========================================================================== GUI
@@ -127,17 +140,21 @@ public:
                    
                    if (myFile.existsAsFile())
                    {
-                       // Reader
-                       auto reader = formatManager.createReaderFor(myFile);
-           
-                      if (reader != nullptr)
+                       tracks.push_back(myFile);
+                       
+                       if (tracks.size() == 1)
                        {
-                           auto newSource = std::make_unique<juce::AudioFormatReaderSource> (reader, true);
-                           transportSource.setSource (newSource.get(), 0, nullptr, reader->sampleRate);
-                           playButton.setEnabled (true);
-                           readerSource.reset (newSource.release());
-                           trackIsOn = true;
-                       }
+                            auto reader = formatManager.createReaderFor(tracks[tracksQueue]);
+                
+                            if (reader != nullptr)
+                            {
+                                auto newSource = std::make_unique<juce::AudioFormatReaderSource>        (reader, true);
+                                transportSource.setSource (newSource.get(), 0, nullptr,         reader->sampleRate);
+                                playButton.setEnabled (true);
+                                readerSource.reset (newSource.release());
+                                trackIsOn = true;
+                            }
+                        }
                    }
                    else
                    {
@@ -157,6 +174,8 @@ public:
         playButton.setBounds (oneSixthhWidth, 10, buttonWidth, 20);
         pauseButton.setBounds (oneSixthhWidth*2.5, 10, buttonWidth, 20);
         stopButton.setBounds (oneSixthhWidth*4, 10, buttonWidth, 20);
+        prevButton.setBounds (oneSixthhWidth*2, 35, buttonWidth, 20);
+        nextButton.setBounds (oneSixthhWidth*3, 35, buttonWidth, 20);
         mySlider.setBounds (60, 100, 50, 50);
         qSlider.setBounds(getWidth()-110, 100, 50, 50);
           
@@ -168,16 +187,16 @@ public:
         auto imageHeight = spectrogramImage.getHeight();
 
         // first, shuffle our image leftwards by 1 pixel..
-        spectrogramImage.moveImageSection(0, 0, 1, 0, rightHandEdge, imageHeight);         // [1]
+        spectrogramImage.moveImageSection(0, 0, 1, 0, rightHandEdge, imageHeight);
 
         // then render our FFT data..
-        forwardFFT.performFrequencyOnlyForwardTransform(fftData.data());                   // [2]
+        forwardFFT.performFrequencyOnlyForwardTransform(fftData.data());
 
         // find the range of values produced, so we can scale our rendering to
         // show up the detail clearly
-        auto maxLevel = juce::FloatVectorOperations::findMinAndMax(fftData.data(), fftSize / 2); // [3]
+        auto maxLevel = juce::FloatVectorOperations::findMinAndMax(fftData.data(), fftSize / 2);
 
-        for (auto y = 1; y < imageHeight; ++y)                                              // [4]
+        for (auto y = 1; y < imageHeight; ++y)
         {
             auto skewedProportionY = 1.0f - std::exp(std::log((float)y / (float)imageHeight) * 0.2f);
             auto fftDataIndex = (size_t)juce::jlimit(0, fftSize / 2, (int)(skewedProportionY * fftSize / 2));
@@ -211,7 +230,9 @@ public:
             g.strokePath(path, stroke_type);
         }
         g.setOpacity(1.0f);
-        g.drawImage(spectrogramImage, getLocalBounds().toFloat());
+        juce::Rectangle<float> imageBoundaries(0, getHeight()/3*2, getWidth(), getHeight()/3);
+        g.drawImage(spectrogramImage, imageBoundaries);
+        
     }
     
     //========================================================================== AUDIO
@@ -299,6 +320,50 @@ public:
     void pauseButtonClicked()
     {
         changeState (Pausing);
+    }
+    
+    void prevButtonClicked()
+    {
+        if (tracksQueue > 0)
+        {
+            tracksQueue--;
+            auto reader = formatManager.createReaderFor(tracks[tracksQueue]);
+            
+            if (reader != nullptr)
+            {
+                auto newSource = std::make_unique<juce::AudioFormatReaderSource> (reader, true);
+                transportSource.setSource (newSource.get(), 0, nullptr, reader->sampleRate);
+                playButton.setEnabled (true);
+                readerSource.reset (newSource.release());
+                trackIsOn = true;
+                if (state == Playing)
+                {
+                    transportSource.start();
+                }
+            }
+        }
+    }
+    
+    void nextButtonClicked()
+    {
+        if (tracksQueue < tracks.size())
+        {
+            tracksQueue++;
+            auto reader = formatManager.createReaderFor(tracks[tracksQueue]);
+            
+            if (reader != nullptr)
+            {
+                auto newSource = std::make_unique<juce::AudioFormatReaderSource> (reader, true);
+                transportSource.setSource (newSource.get(), 0, nullptr, reader->sampleRate);
+                playButton.setEnabled (true);
+                readerSource.reset (newSource.release());
+                trackIsOn = true;
+                if (state == Playing)
+                {
+                    transportSource.start();
+                }
+            }
+        }
     }
     
     void sliderValueChanged()
@@ -389,15 +454,22 @@ private:
             nextFFTBlockReady = false;
             repaint();
         }
+        if (tracksQueue > 0)
+            prevButton.setEnabled(true);
+        else
+            prevButton.setEnabled(false);
+        
+        if (tracks.size() > 1 && tracksQueue < tracks.size())
+            nextButton.setEnabled(true);
+        else
+            nextButton.setEnabled(false);
     }
     
     static constexpr auto fftOrder = 10;
     static constexpr auto fftSize = 1 << fftOrder;
     
     //==========================================================================
-    juce::TextButton pauseButton;
-    juce::TextButton playButton;
-    juce::TextButton stopButton;
+    juce::TextButton pauseButton, playButton, stopButton, prevButton, nextButton;
     juce::Slider mySlider, qSlider;
     juce::Label  frequencyLabel, qLabel;
 
@@ -407,15 +479,20 @@ private:
     std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
     juce::AudioTransportSource transportSource;
     TransportState state;
+    
 
-    juce::dsp::FFT forwardFFT;                          // [3]
+    juce::dsp::FFT forwardFFT;                          
     juce::Image spectrogramImage;
     dsp::ProcessorDuplicator<dsp::IIR::Filter<float>, dsp::IIR::Coefficients<float>> lp1;
     
-    std::array<float, fftSize> fifo;                    // [4]
-    std::array<float, fftSize * 2> fftData;             // [5]
-    int fifoIndex = 0;                                  // [6]
-    bool nextFFTBlockReady = false;                     // [7]
+    std::vector<juce::File> tracks;
+    juce::File* currentTrack;
+    int tracksQueue = 0;
+    
+    std::array<float, fftSize> fifo;
+    std::array<float, fftSize * 2> fftData;
+    int fifoIndex = 0;
+    bool nextFFTBlockReady = false;
     float lolsky = 20000;
     float qsky = 0.1f;
     float fratm = 0.0;

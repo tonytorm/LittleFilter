@@ -20,7 +20,7 @@ public:
 
     void initialise (const juce::String&) override
     {
-        mainWindow.reset (new MainWindow ("PlayingSoundFilesTutorial", new MainContentComponent, *this));
+        mainWindow.reset (new MainWindow ("Fratm", new MainContentComponent, *this));
     }
 
     void shutdown() override                         { mainWindow = nullptr; }
