@@ -64,13 +64,13 @@ public:
         addAndMakeVisible (&prevButton);
         prevButton.setButtonText ("Prev");
         prevButton.onClick = [this] { prevButtonClicked(); };
-        prevButton.setColour (juce::TextButton::buttonColourId, juce::Colours::darkgrey);
+        prevButton.setColour (juce::TextButton::buttonColourId, juce::Colours::skyblue);
         prevButton.setEnabled (false);
         
         addAndMakeVisible (&nextButton);
         nextButton.setButtonText ("Next");
         nextButton.onClick = [this] { nextButtonClicked(); };
-        nextButton.setColour (juce::TextButton::buttonColourId, juce::Colours::darkgrey);
+        nextButton.setColour (juce::TextButton::buttonColourId, juce::Colours::darkblue);
         nextButton.setEnabled (false);
         
         addAndMakeVisible(&mySlider);
@@ -109,9 +109,10 @@ public:
         qLabel.attachToComponent (&qSlider, false);
 
 
-        startTimerHz(60);
+        startTimerHz(20);
 
         setAudioChannels (0, 2);
+        imageBoundaries = new juce::Rectangle<float>(0, getHeight()/3*2, getWidth(), getHeight()/3);
     }
 
     ~MainContentComponent() override
@@ -202,7 +203,7 @@ public:
             auto fftDataIndex = (size_t)juce::jlimit(0, fftSize / 2, (int)(skewedProportionY * fftSize / 2));
             auto level = juce::jmap(fftData[fftDataIndex], 0.0f, juce::jmax(maxLevel.getEnd(), 1e-5f), 0.0f, 1.0f);
 
-            spectrogramImage.setPixelAt(rightHandEdge, y, juce::Colour::fromHSV(level, 1.0f, level, 1.0f)); // [5]
+            spectrogramImage.setPixelAt(rightHandEdge, y, juce::Colour::fromHSV(level, 1.0f, level, 1.0f));
         }
     }
 
@@ -211,13 +212,13 @@ public:
         g.fillAll(juce::Colours::black);
 
         if(trackIsOn == false) {
-            auto text_rect_w = std::min(getWidth() - 16, 200);
-            auto text_rect_h = std::min(getHeight() - 16, 100);
+            auto text_rect_w = std::min(getWidth() - 8, 200);
+            auto text_rect_h = std::min(getHeight() - 8, 100);
             Rectangle<int> text_rect((getWidth() - text_rect_w) / 2, (getHeight() - text_rect_h) / 2, text_rect_w, text_rect_h);
             g.setFont(juce::Font("SF Pro Text", 17, juce::Font::FontStyleFlags::plain));
             g.setColour(juce::Colour(0xff818A97));
-            g.drawText("Drag and drop files here to open them as tracks.", text_rect, juce::Justification::centred);
-            
+            g.drawText("Drag and drop tracks..", text_rect, juce::Justification::centred);
+
             g.setColour(juce::Colour(0x70818A97));
             juce::Path path;
             auto stroke_thickness = 1.0;
@@ -229,9 +230,10 @@ public:
             stroke_type.createDashedStroke(path, path, dash_length, 2);
             g.strokePath(path, stroke_type);
         }
+        
         g.setOpacity(1.0f);
-        juce::Rectangle<float> imageBoundaries(0, getHeight()/3*2, getWidth(), getHeight()/3);
-        g.drawImage(spectrogramImage, imageBoundaries);
+        
+        g.drawImage(spectrogramImage, *imageBoundaries);
         
     }
     
@@ -437,7 +439,7 @@ private:
             {
                 std::fill(fftData.begin(), fftData.end(), 0.0f);
                 std::copy(fifo.begin(), fifo.end(), fftData.begin());
-                nextFFTBlockReady = true;
+                nextFFTBlockReady = true;  //data race
             }
 
             fifoIndex = 0;
@@ -448,12 +450,13 @@ private:
 
     void timerCallback() override
     {
-        if (nextFFTBlockReady)
+        if (nextFFTBlockReady) // data race here 'nextfftblockready
         {
             drawNextLineOfSpectrogram();
             nextFFTBlockReady = false;
             repaint();
         }
+        
         if (tracksQueue > 0)
             prevButton.setEnabled(true);
         else
@@ -488,11 +491,12 @@ private:
     std::vector<juce::File> tracks;
     juce::File* currentTrack;
     int tracksQueue = 0;
+    juce::Rectangle<float>* imageBoundaries;
     
     std::array<float, fftSize> fifo;
     std::array<float, fftSize * 2> fftData;
     int fifoIndex = 0;
-    bool nextFFTBlockReady = false;
+    std::atomic_bool nextFFTBlockReady = ATOMIC_VAR_INIT(false);
     float lolsky = 20000;
     float qsky = 0.1f;
     float fratm = 0.0;
