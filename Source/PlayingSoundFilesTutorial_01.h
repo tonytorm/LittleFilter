@@ -115,10 +115,7 @@ public:
         setAudioChannels (0, 2);
         imageBoundaries = new juce::Rectangle<float>(0, getHeight()/3*2, getWidth(), getHeight()/3);
         
-        for (int i = 0; i < 16; i++)
-        {
-            trackList[i].setColour(juce::TextButton::buttonColourId, Colour());
-        }
+       
         
         
         
@@ -193,8 +190,8 @@ public:
         stopButton.setBounds (oneSixthhWidth*4, 10, buttonWidth, 20);
         prevButton.setBounds (oneSixthhWidth*2, 35, buttonWidth, 20);
         nextButton.setBounds (oneSixthhWidth*3, 35, buttonWidth, 20);
-        mySlider.setBounds (60, 100, 50, 50);
-        qSlider.setBounds(getWidth()-110, 100, 50, 50);
+        mySlider.setBounds (60, 80, 50, 50);
+        qSlider.setBounds(getWidth()-110, 80, 50, 50);
         tracksContainer.setBounds(0, 140, getWidth(), 100);
           
     }
@@ -479,10 +476,19 @@ private:
         else
             prevButton.setEnabled(false);
         
-        if (tracks.size() > 1 && tracksQueue < tracks.size())
+        if (tracksQueue < tracks.size()-1)
             nextButton.setEnabled(true);
         else
             nextButton.setEnabled(false);
+        
+        for (int i = 0; i < 16; i++)
+        {
+            trackList[i].setColour(juce::TextButton::buttonColourId, Colour());
+            if (i == tracksQueue)
+                trackList[tracksQueue].setColour(juce::TextButton::buttonColourId, juce::Colours::grey);
+        }
+        
+       
     }
     
     static constexpr auto fftOrder = 10;
