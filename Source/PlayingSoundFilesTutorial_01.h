@@ -98,6 +98,7 @@ public:
         formatManager.registerBasicFormats();
         transportSource.addChangeListener (this);
         
+        
         addAndMakeVisible(frequencyLabel);
         frequencyLabel.setText ("Hz", juce::dontSendNotification);
         frequencyLabel.setJustificationType(Justification::centred);
@@ -113,6 +114,15 @@ public:
 
         setAudioChannels (0, 2);
         imageBoundaries = new juce::Rectangle<float>(0, getHeight()/3*2, getWidth(), getHeight()/3);
+        
+        for (int i = 0; i < 16; i++)
+        {
+            trackList[i].setColour(juce::TextButton::buttonColourId, Colour());
+        }
+        
+        
+        
+        
     }
 
     ~MainContentComponent() override
@@ -143,10 +153,15 @@ public:
                    {
                        tracks.push_back(myFile);
                        
+                       trackList[trackListIndex].setButtonText(myFile.getFileName());
+                       addAndMakeVisible(trackList[trackListIndex]);
+                       trackList[trackListIndex].setBounds(0, 140+(20*trackListIndex), getWidth(), 20);
+                       trackListIndex++;
+                       
                        if (tracks.size() == 1)
                        {
                             auto reader = formatManager.createReaderFor(tracks[tracksQueue]);
-                
+                            
                             if (reader != nullptr)
                             {
                                 auto newSource = std::make_unique<juce::AudioFormatReaderSource>        (reader, true);
@@ -154,6 +169,7 @@ public:
                                 playButton.setEnabled (true);
                                 readerSource.reset (newSource.release());
                                 trackIsOn = true;
+                               
                             }
                         }
                    }
@@ -179,6 +195,7 @@ public:
         nextButton.setBounds (oneSixthhWidth*3, 35, buttonWidth, 20);
         mySlider.setBounds (60, 100, 50, 50);
         qSlider.setBounds(getWidth()-110, 100, 50, 50);
+        tracksContainer.setBounds(0, 140, getWidth(), 100);
           
     }
     
@@ -475,9 +492,9 @@ private:
     juce::TextButton pauseButton, playButton, stopButton, prevButton, nextButton;
     juce::Slider mySlider, qSlider;
     juce::Label  frequencyLabel, qLabel;
-
+    std::array<TextButton, 16> trackList;
     std::unique_ptr<juce::FileChooser> chooser;
-
+    juce::Component tracksContainer;
     juce::AudioFormatManager formatManager;
     std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
     juce::AudioTransportSource transportSource;
@@ -491,7 +508,10 @@ private:
     std::vector<juce::File> tracks;
     juce::File* currentTrack;
     int tracksQueue = 0;
+    int trackListIndex = 0;
     juce::Rectangle<float>* imageBoundaries;
+    
+    //juce::OpenGLContext openGLContext;
     
     std::array<float, fftSize> fifo;
     std::array<float, fftSize * 2> fftData;
